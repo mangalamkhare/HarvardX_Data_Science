@@ -1,0 +1,540 @@
+---
+title: "RAMEN_CYO_Project_Report"
+author: "Mangalam Khare"
+date: "25th July 2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This project is part of Choose your own (CYO) project of the HarvardX course Capstone project.
+The objective of this project is to develop Machine learning algorithm using the Ramen Rating data set.This data set is downloaded from Kaggle.Several machine learning algorithm has been used and results have been compared to get the smallest RMSE possible as a measure of evaluating model performance
+
+RMSE, Root Mean Square Error is the  measure of the differences between predicted values and actual/observed values. 
+
+This Report has a problem statement section, data set preparation, Data pre-processing and exploratory analysis, Modelling and analysis of various models, results and conclusion
+
+# Problem Statement
+
+The objective of this project is to use machine learning algorithms that predicts Ramen Ratings (Stars) using the inputs/ features present in the Ramen Ratings dataset. This dataset is split into Train (df_ramen_trian)
+and test(df_ramen_test) data. The algorithms are trained with train set and validated with test set As mentioned in the Introduction section the aim is to get the smallest RMSE possible
+
+data can be downloaded from kaggle https://www.kaggle.com/residentmario/ramen-ratings)
+
+OR GitHub
+
+https://raw.githubusercontent.com/mangalamkhare/HarvardX_Data_Science/main/ramen-ratings.csv
+
+# Dataset Preparation
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+
+#############################################################
+# Create Ramen data set
+#############################################################
+
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(caret)) install.packages("caret")
+if(!require(data.table)) install.packages("data.table")
+
+if(!require(FNN)) install.packages("FNN")
+if(!require(mltools)) install.packages("mltools")
+
+if(!require(plyr)) install.packages("plyr")
+if(!require(ggpubr)) install.packages("ggpubr")
+
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(FNN)
+library(ggplot2)
+library(lubridate)
+library(dslabs)
+library(plyr)
+library(ggpubr)
+library(class)
+library(rpart)
+library(randomForest)
+
+# Ramen Ratings dataset:
+
+link<-'https://raw.githubusercontent.com/mangalamkhare/HarvardX_Data_Science/main/ramen-ratings.csv'
+
+df <- read.csv(file =link)
+
+head(df)
+
+df_ramen <- as.data.frame(df) %>% mutate(
+                             reviewId = 'Review #' ,
+                             topten = as.character("Top Ten"), 
+                             brand = as.character(Brand), 
+                             variety = as.character(Variety), 
+                             style = as.character(Style), 
+                             country = as.character(Country),
+                             stars= as.numeric(Stars))
+head(df_ramen)
+
+```
+
+# Data pre-processing and exploratory analysis
+Check few rows of the ramen data set to get familiar with the data It contains 7 columns reviewId, topten,brand, variety,style, country and stars which represents rating. Each row represents data for a single product review.
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+head(df_ramen)
+
+```
+Check Dimensions and Summary stats
+
+Check for the dimensions of the data set to get total no of rows and columns and Summary stats 
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+# Rows Columns
+
+dim(df_ramen)
+
+# Data set Summary
+
+summary(df_ramen)
+
+# check for the number of unique brand, style, variety and country in the ramen dataset
+
+# Unique number of Style and Country 
+
+df_ramen %>%
+summarize(n_style = n_distinct(style), 
+n_country = n_distinct(country))
+
+# unique number of brand and variety  
+
+df_ramen %>%
+summarize(n_brand = n_distinct(brand), 
+n_variety = n_distinct(variety))
+```
+Since reviewId represents unique review it will not be used for modelling, we will drop it. 
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# check topten column
+
+n_topten <- unique(df_ramen$topten)
+
+n_topten
+```
+Since top10 does not have any useful data we will drop this as well
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+df_ramen <- df_ramen %>%  select(brand , variety, style,country, stars) 
+
+head(df_ramen)
+
+# Clean the data set
+
+df_ramen [df_ramen == "Unrated"] <- "0"
+df_ramen <- df_ramen  %>%na.omit()
+
+```
+## Define the function for RMSE
+
+RMSE <- function(true_ratings, predicted_ratings){
+sqrt(mean((true_ratings-predicted_ratings)^2))
+}
+
+## Stars/Ratings distribution
+
+Indicates that most of the ramen are rated between 3 and 5, we will also check the distributions of other features and decide on features to be included for prediction
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# distribution of stars
+
+ggplot(df_ramen, aes(x=stars)) + 
+geom_histogram(aes(y=..density..),     
+      binwidth=0.2,
+      colour="black", fill="grey")
+```                  
+
+## Distribution of Brands
+
+There are 355 brands. If we try to show all the plot may become difficult to read hence we will just include brands where frequency is > 30 We can see that the brand Nissan is the top most with a very large difference
+with remaining brands
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# Brands distribution  
+df_ramen %>% group_by(brand) %>% filter(n() > 30) %>% 
+ggplot(aes(x = brand) )+ geom_bar() + coord_flip()
+
+```
+
+## Distribution of Style
+We can see that some of the styles like Box, Bar,can have very very less number of reviews we will drop them from our data set
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# stars distributions
+df_ramen %>%
+ggplot(aes(style)) +
+geom_bar() +
+ylab("Count")
+
+df_ramen<- df_ramen %>% 
+filter(style %in% c("Pack", "Bowl", "Cup", "Tray"))
+```
+## Distribution of Country
+
+As we have seen earlier there are 38 unique counytries the plot may become difficult to read hence we will just include countries where frequency is > 50. We will also club remaining countries with low frequency into Others
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+# Country Distribution
+
+df_ramen %>% group_by(country) %>% filter(n() > 50) %>% 
+ggplot(aes(x = country)) + geom_bar() + coord_flip()
+
+y <- count(df_ramen, 'country') 
+df_country <-  y[order(-y$freq),]
+df_country
+
+df_country <- df_country %>% 
+filter(freq > 100)
+
+df_country
+```
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+
+df_ramen$country[!df_ramen$country  %in% c("Japan","USA","South   Korea","Taiwan","Thailand", "China","Malaysia","Hong Kong","Indonesia","Singapore","Vietnam")] <- "Others"
+```
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+unique(df_ramen$country)
+```
+## Data Preparation
+
+We will Start with Simple RMSE using mean as base and then use Style and country as our features for further modelling and analysis Since style and country features have categorical data, we will create columns
+for binary variables(dummy data). As we are not using variey and brand features for our modelling we will remove them from our data set and will only keep features used for analysis
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+# First take backup of the entire data set
+
+ramen <- df_ramen
+
+df_ramen <- df_ramen %>% select(style, country, stars)
+
+# Create dummy variables 
+
+dummy <- dummyVars(" ~ .", data = df_ramen)
+
+df_ramen_dummy <- data.frame(predict(dummy, newdata = df_ramen))
+
+# split the data set into training and test sets
+# train set- 80%, test set/validation set - 20%
+
+set.seed(1, sample.kind="Rounding") 
+
+test_index <- createDataPartition(y = df_ramen_dummy$stars, times = 1, p = 0.2, list = FALSE)
+
+df_ramen_train<- df_ramen_dummy[-test_index,]
+df_ramen_test <- df_ramen_dummy[test_index,]
+
+```
+# Modelling and analysis
+
+## Base : Average Stars/Rating model
+
+In this model we will Compute the mean stars/rating from the ramen train data set mean rating is used to predict the same rating for all types,  regardless of any other feature. This simple model assumes that all the   diferences in Stars are explained by the random variable alone.
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+#Base : Average Ramen star/rating model 
+
+# Compute the mean rating from the ramen train data set
+
+mu <- mean(df_ramen_train$stars)
+mu
+
+# Test Results based on base prediction
+
+base_rmse <- RMSE(df_ramen_test$stars, mu)
+base_rmse
+
+# Check results save prediction in dataframe
+
+rmse_results <- data_frame(Method = " Average Stars/Rating model", 
+                  RMSE = base_rmse)
+rmse_results %>% knitr::kable()
+
+
+```
+This will serve as base RMSE. We will now apply Machine Learning algorithms to improve it further.lets start will Liner regression first to establish a base algorithm and then move up to Decision tree, random forest and KNN Regression 
+
+##  Linear Regression
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# Liner Regression
+
+set.seed(1, sample.kind = "Rounding")
+
+train_lm <- lm(stars ~ ., data = df_ramen_train)
+
+summary(train_lm)
+
+prediction <- predict(train_lm,df_ramen_test)
+
+#prediction
+
+rmse <- RMSE(prediction, df_ramen_test$stars)
+
+rmse
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="Linear Regression model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+
+```
+As we can see  RMSE value of 0.9805611 its improved from our base model
+
+## Decision Tree
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+# Decision Tree
+set.seed(1, sample.kind = "Rounding")
+train_rpart <- rpart(stars~., method = "anova", data = df_ramen_train)
+
+train_rpart
+
+prediction <- predict(train_rpart, df_ramen_test)
+
+rmse <- RMSE(prediction, df_ramen_test$stars)
+
+
+rmse
+
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="Decision Tree Regression model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+
+
+```
+##  Random Forest
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+# Random Forest
+
+set.seed(1, sample.kind = "Rounding")
+train_rf <- randomForest(stars~., data = df_ramen_train, mtry = 2,
+#train_rf <- randomForest(stars~., data = df_ramen_train, mtry = seq(1:7),
+             importance = TRUE )
+
+train_rf
+
+prediction <- predict(train_rf, data = df_ramen_test)
+
+rmse <- RMSE(prediction, df_ramen_test$stars)
+
+rmse
+
+rmse_results <- bind_rows(rmse_results,
+              data_frame(Method="Random Forest Regression model",  
+                         RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+```
+## Knn Regression
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+# Knn Regression
+
+set.seed(1, sample.kind = "Rounding")
+train_knn <- train(stars ~ .,  method = "knn", 
+       #tuneGrid = data.frame(k = seq(3, 5, 0.25)), 
+       tuneGrid = data.frame(k = seq(3, 8, 0.25)), 
+       data = df_ramen_train)
+
+
+prediction <- predict(train_knn,df_ramen_test)
+
+#prediction
+
+rmse<-RMSE(prediction, df_ramen_test$stars)
+
+rmse
+
+rmse_results <- bind_rows(rmse_results,
+              data_frame(Method="Knn Regression model",  
+                         RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+ggplot(train_knn)
+
+train_knn$bestTune
+
+```
+In Regressions models KNN performed the best. Since we are not able to Improve RMSE's further lets try to convert regression into classification, predicting if Ramen noodles are good or not
+we will consider stars>3.75 as 1 (Good) and < as 0 (Not Good)
+
+## Data Preparation for Classification models
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+df_ramen_train_cl <- df_ramen_train
+
+df_ramen_test_cl <- df_ramen_test
+
+head(df_ramen_train_cl)
+head(df_ramen_test_cl)
+
+df_ramen_train_cl <- mutate(df_ramen_train_cl , isGood = ifelse(df_ramen_train_cl$stars > 3.75, 1, 0))
+df_ramen_test_cl <- mutate(df_ramen_test_cl , isGood = ifelse(df_ramen_test_cl$stars > 3.75, 1, 0))
+
+# we will drop stars column
+
+df_ramen_train_cl <- df_ramen_train_cl %>%  select(-stars) 
+df_ramen_test_cl <- df_ramen_test_cl %>%  select(-stars)
+
+head(df_ramen_train_cl)
+head(df_ramen_test_cl)
+
+```
+# Classification Models    
+
+## LDA Model
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}    
+# LDA
+set.seed(1, sample.kind = "Rounding")
+train_lm <- lm(isGood ~ ., data = df_ramen_train_cl)
+
+summary(train_lm)
+
+prediction <- predict(train_lm,df_ramen_test_cl)
+
+# prediction
+
+rmse <- RMSE(prediction, df_ramen_test_cl$isGood)
+
+rmse
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="LDA Classification model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+
+```
+As we can see the accuracy is improved to a greater extent. Now we will run different classification models to check if it improves further
+
+## Knn Classification Model
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE} 
+# Knn Classification
+set.seed(1, sample.kind = "Rounding") 
+train_knn_cl <- train(isGood ~ .,
+          method = "knn",
+          data = df_ramen_train_cl,
+          #tuneGrid = data.frame(k = seq(1, 7, 0.25)))
+          #tuneGrid = data.frame(k = seq(3, 5, 0.25)))
+          tuneGrid = data.frame(k = seq(3, 8, 0.25)))
+
+prediction <- predict(train_knn_cl, df_ramen_test_cl)
+
+rmse <- RMSE(prediction, df_ramen_test_cl$isGood)
+
+rmse
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="Knn Classification model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+train_knn_cl$bestTune
+
+ggplot(train_knn_cl)
+
+``` 
+
+## Cross Validation
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE} 
+
+# Cross Validation
+set.seed(1, sample.kind = "Rounding")  
+train_knn_cv_cl <- train(isGood ~ .,
+             method = "knn",
+             data = df_ramen_train_cl,
+             #tuneGrid = data.frame(k = seq(1, 7, 0.25)),
+             tuneGrid = data.frame(k = seq(3, 8, 0.25)),
+             trControl = trainControl(method = "cv", number = 10, p = 0.9))
+
+prediction <- predict(train_knn_cv_cl, df_ramen_test_cl)
+
+rmse <- RMSE(prediction, df_ramen_test_cl$isGood)
+
+rmse
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="Cross validation Classification model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+train_knn_cv_cl$bestTune
+
+```
+I Tried Knn and cross validation for multiple tunegrid but the Results remained same. Last we will try to see if Classification Tree Model Improves the results or not
+
+## Classification Tree 
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE} 
+# Classification Tree
+set.seed(1, sample.kind = "Rounding") 
+train_rpart_cl <- train(isGood ~ ., 
+            method = "rpart",
+            tuneGrid = data.frame(cp = seq(0, 0.5, 0.02)),
+            data = df_ramen_train_cl)
+
+prediction <- predict(train_rpart_cl, df_ramen_test_cl)
+
+rmse <- RMSE(prediction, df_ramen_test_cl$isGood)
+
+rmse
+rmse_results <- bind_rows(rmse_results,
+                 data_frame(Method="Classification tree model",  
+                            RMSE = rmse))
+rmse_results %>% knitr::kable()
+
+train_rpart_cl$bestTune
+```
+We have trained multiple classification models but could not improve the accuracy further The best accuracy
+was obtained with Knn Classification: RMSE -
+
+```{r}
+rmse
+```
+
+# Results
+
+The RMSE values of all the represented models are the following:
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE}
+
+rmse_results %>% knitr::kable()
+
+```
+# Conclusion
+
+Based on various models as explained in the Modeling section we have developed various machine learning
+algorithms regression and classification to predict ratings using Ramen dataset. 
+
+The Final RMSE is 
+```{r}
+rmse
+```
+
+# Future work
+
+In this Analysis we ran Machine learning algorithms on Style and Country features. we could may further improve by using other 2 features (variety and brand). different combinations or all features. This is a small
+data set we can try to get bigger data set and do analysis
